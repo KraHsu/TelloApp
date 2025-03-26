@@ -478,18 +478,14 @@ class TelloSource(FrameSource):
 
         tl.streamon()
 
-        self.frame_read = tl.get_frame_read()
-
-        self.frame_cnt = 1
-
     def start(self) -> bool:
+
+        self.frame_read = tl.get_frame_read()
+        self.frame_cnt = 1
 
         frame = self.frame_read.frame
 
         self.image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        print("??")
-        cv2.imwrite("jb.png", self.image)
 
         h, w = self.image.shape[:2]
         self.frame_info["width"] = w
@@ -510,6 +506,9 @@ class TelloSource(FrameSource):
         """返回静态图像"""
         if not self.running or self.image is None:
             return False, None
+        
+        frame = self.frame_read.frame
+        self.image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         return True, self.image.copy()
 
