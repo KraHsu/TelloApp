@@ -9,7 +9,6 @@ testButton = NodePath("Button")
 testLabel = NodePath("Label")
 
 [node name="Button" type="Button" parent="."]
-visible = false
 offset_left = 262.0
 offset_top = 95.0
 offset_right = 511.0
@@ -17,7 +16,6 @@ offset_bottom = 199.0
 text = "asdfasdf"
 
 [node name="Label" type="Label" parent="."]
-visible = false
 offset_left = 267.0
 offset_top = 219.0
 offset_right = 515.0
