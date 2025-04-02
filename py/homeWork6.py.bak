@@ -1,0 +1,179 @@
+import os
+from typing import *
+from djitellopy import Tello
+import keyboard
+import time
+import datetime
+import threading
+import cv2
+
+
+SPEED = 20
+
+def show_cmd(tl: Tello, c: str):
+    tl.send_expansion_command(f"mled s r {c}")
+    tl.send_expansion_command(f"mled sl 255")
+
+def mled_off(tl: Tello):
+    tl.send_expansion_command(f"mled sl 0")
+
+def get_depth(tl: Tello):
+    return int(tl.send_read_command('EXT tof?')[4:])
+
+def led(tl: Tello, c: str):
+    if c == "r":
+        c = "255 0 0"
+    elif c == "g":
+        c = "0 255 0"
+    elif c == "b":
+        c = "0 0 255"
+    tl.send_expansion_command(f"led {c}")
+
+frame = None
+show = True
+
+recording = False
+video_writer = None
+recording_start_time = None
+
+def show_img():
+    global recording, video_writer, recording_start_time
+    
+    while show:
+        if frame is not None:
+            display_frame = frame.copy()
+            
+            if recording:
+                elapsed = int((datetime.now() - recording_start_time).total_seconds())
+                mins, secs = divmod(elapsed, 60)
+                timer_text = f"REC {mins:02d}:{secs:02d}"
+                
+                cv2.circle(display_frame, (30, 30), 10, (0, 0, 255), -1)
+                cv2.putText(display_frame, timer_text, (50, 40), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                
+                if video_writer is not None:
+                    video_writer.write(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            
+            cv2.imshow("Frame", cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB))
+            cv2.waitKey(1)
+
+    if video_writer is not None:
+        video_writer.release()
+    cv2.destroyAllWindows()
+
+def start_recording():
+    global recording, video_writer, recording_start_time
+    
+    if recording:
+        return  # Already recording
+    
+    # Create videos directory if it doesn't exist
+    if not os.path.exists('videos'):
+        os.makedirs('videos')
+    
+    # Create filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"videos/tello_recording_{timestamp}.mp4"
+    
+    # Get frame dimensions
+    height, width, _ = frame.shape
+    
+    # Create VideoWriter object (using mp4v codec)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(filename, fourcc, 30.0, (width, height))
+    
+    recording = True
+    recording_start_time = datetime.now()
+    print(f"Recording started: {filename}")
+
+def stop_recording():
+    global recording, video_writer
+    
+    if not recording:
+        return
+    
+    recording = False
+    if video_writer is not None:
+        video_writer.release()
+        video_writer = None
+        print("Recording stopped")
+
+if __name__ == "__main__":
+    tl = Tello()
+
+    tl.connect()
+    tl.takeoff()
+
+    tl.streamoff()
+    tl.streamon()
+
+    frame_read = tl.get_frame_read()
+
+    threading.Thread(target=show_img).start()
+
+    try:
+        while True:
+            frame = frame_read.frame
+
+            if keyboard.is_pressed("a"):
+                tl.send_rc_control(-SPEED, 0, 0, 0)
+                show_cmd(tl, "A")
+                continue
+
+            if keyboard.is_pressed("d"):
+                tl.send_rc_control(SPEED, 0, 0, 0)
+                show_cmd(tl, "D")
+                continue
+
+            if keyboard.is_pressed("w"):
+                tl.send_rc_control(0, SPEED, 0, 0)
+                show_cmd(tl, "W")
+                continue
+
+            if keyboard.is_pressed("s"):
+                tl.send_rc_control(0, -SPEED, 0, 0)
+                show_cmd(tl, "S")
+                continue
+
+            if keyboard.is_pressed("q"):
+                tl.send_rc_control(0, 0, 0, SPEED)
+                show_cmd(tl, "Q")
+                continue
+
+            if keyboard.is_pressed("e"):
+                tl.send_rc_control(0, 0, 0, -SPEED)
+                show_cmd(tl, "E")
+                continue
+                
+            # Add recording controls
+            if keyboard.is_pressed("r"):
+                if not recording:
+                    start_recording()
+                    led(tl, "r")  # Red LED to indicate recording
+                    time.sleep(0.5)  # Prevent multiple triggers
+                
+            if keyboard.is_pressed("t"):
+                if recording:
+                    stop_recording()
+                    led(tl, "g")  # Green LED to indicate recording stopped
+                    time.sleep(0.5)  # Prevent multiple triggers
+
+            # 默认关闭
+            mled_off(tl)
+
+            if keyboard.is_pressed("esc"):
+                break
+
+    except Exception as e:
+        print(e)
+
+    finally:
+        print("降落")
+        if recording:
+            stop_recording()
+            
+        tl.streamoff()
+        tl.land()
+
+        show = False
