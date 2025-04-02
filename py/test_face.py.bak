@@ -1,0 +1,475 @@
+from djitellopy import Tello
+import cv2
+import time
+import threading
+import numpy as np
+import os
+import argparse
+from datetime import datetime
+import queue
+
+# 命令行参数解析
+parser = argparse.ArgumentParser(description='Tello人脸检测测试')
+parser.add_argument('-m', '--method', type=str, default='opencv',
+                    choices=['opencv', 'mtcnn', 'face_recognition'],
+                    help='选择人脸检测方法: opencv, mtcnn, 或 face_recognition')
+parser.add_argument('-r', '--recognize', action='store_true',
+                    help='启用特定人员识别模式(仅适用于face_recognition方法)')
+parser.add_argument('-i', '--images', type=str, default='known_faces',
+                    help='包含已知人脸图像的文件夹路径')
+args = parser.parse_args()
+
+# 全局变量
+frame = None
+running = True
+detection_methods = ['opencv', 'mtcnn', 'face_recognition']
+current_method = args.method
+enable_recognition = args.recognize
+known_faces_dir = args.images
+
+known_face_encodings = []
+known_face_names = []
+
+latest_frame = None  # 最新的视频帧
+latest_results = None  # 最新的识别结果 (faces, names)
+processing = False  # 是否正在处理识别
+results_frame_count = 0  # 当前结果已使用的帧数
+max_reuse_frames = 30  # 最多重复使用结果的帧数
+results_lock = threading.Lock()  # 用于同步访问结果的锁
+last_process_time = 0  # 上次处理时间，用于超时检测
+
+# OpenCV Haar级联检测器
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+# 检查MTCNN是否可用
+try:
+    from mtcnn import MTCNN
+    mtcnn_detector = MTCNN()
+    has_mtcnn = True
+    print("MTCNN可用")
+except ImportError:
+    has_mtcnn = False
+    print("MTCNN不可用，请使用 'pip install mtcnn tensorflow' 安装")
+    if current_method == 'mtcnn':
+        print("警告: 已选择MTCNN但未安装，将使用OpenCV替代")
+        current_method = 'opencv'
+
+# 检查face_recognition是否可用
+try:
+    import face_recognition
+    has_face_recognition = True
+    print("face_recognition可用")
+except ImportError:
+    has_face_recognition = False
+    print("face_recognition不可用，请使用 'pip install face_recognition' 安装")
+    print("注意: 这可能需要先安装dlib，详见https://github.com/ageitgey/face_recognition")
+    if current_method == 'face_recognition':
+        print("警告: 已选择face_recognition但未安装，将使用OpenCV替代")
+        current_method = 'opencv'
+
+def face_detection_thread():
+    """专门负责人脸检测的线程"""
+    global latest_frame, latest_results, processing, results_frame_count, last_process_time
+    
+    while running:
+        # 检查是否有帧可处理
+        current_frame = None
+        
+        with results_lock:
+            # 添加处理超时检测，如果处理时间超过3秒，重置处理状态
+            if processing and time.time() - last_process_time > 3:
+                print("检测到处理超时，重置处理状态")
+                processing = False
+            
+            # 只有当不在处理中且有可用帧时才处理
+            if not processing and latest_frame is not None:
+                current_frame = latest_frame.copy()
+                processing = True
+                last_process_time = time.time()
+                print("开始人脸检测处理...")
+        
+        # 如果没有需要处理的帧，等待一会儿
+        if current_frame is None:
+            time.sleep(0.01)
+            continue
+        
+        try:
+            # 执行人脸检测
+            faces, names = detect_faces(current_frame, method=current_method)
+            print(f"检测完成: 找到 {len(faces)} 个人脸")
+            
+            # 更新结果
+            with results_lock:
+                latest_results = (faces, names, current_frame.shape)
+                results_frame_count = 0
+                processing = False
+        except Exception as e:
+            print(f"人脸检测错误: {e}")
+            with results_lock:
+                processing = False
+        
+        # 控制处理频率，避免CPU过载
+        time.sleep(0.01)
+
+def detect_faces_opencv(image, improved=True):
+    """使用OpenCV Haar级联分类器检测人脸"""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    if improved:
+        # 改进的参数
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.05,      
+            minNeighbors=10,         
+            minSize=(120, 120)      
+        )
+    else:
+        # 默认参数
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+    
+    return faces
+
+def detect_faces_mtcnn(image):
+    """使用MTCNN检测人脸"""
+    if not has_mtcnn:
+        return []
+        
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    mtcnn_results = mtcnn_detector.detect_faces(rgb_image)
+    
+    faces = []
+    for face in mtcnn_results:
+        # 提取边界框坐标
+        x, y, w, h = face['box']
+        # 过滤低置信度检测
+        if face['confidence'] > 0.9:
+            faces.append((x, y, w, h))
+    
+    return faces
+
+first = True
+
+def detect_faces_fr(image, recognize_specific=False):
+    """使用face_recognition库检测人脸，可选择识别特定人员"""
+    global first
+
+    if not has_face_recognition:
+        return []
+    
+    # 转换为RGB格式（face_recognition需要）
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    
+    # 定位图像中的所有人脸
+    face_locations = face_recognition.face_locations(rgb_image, model="hog")
+
+    if len(face_locations) != 0 and first:
+        cv2.imwrite("test.png", rgb_image)
+        first = False
+        print("获取一张人脸")
+    
+    # 如果不需要识别特定人员或没有已知人脸，返回所有人脸
+    if not recognize_specific or len(known_face_encodings) == 0:
+        # 转换为OpenCV格式 (x, y, w, h)
+        faces = []
+        for (top, right, bottom, left) in face_locations:
+            faces.append((left, top, right-left, bottom-top))
+        return faces, [None] * len(faces)
+    
+    # 提取当前帧中所有人脸的编码
+    face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+    
+    # 存储匹配的人脸和姓名
+    matched_faces = []
+    matched_names = []
+    
+    # 比较每个人脸与已知人脸
+    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+        # 与所有已知人脸进行比较
+        matches = face_recognition.compare_faces(known_face_encodings, face_encoding, tolerance=0.6)
+        
+        name = None
+        
+        # 如果找到匹配，使用距离最近的已知人脸
+        if True in matches:
+            # 计算与所有已知人脸的距离
+            face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+            best_match_index = np.argmin(face_distances)
+            
+            if matches[best_match_index]:
+                name = known_face_names[best_match_index]
+                # 将此人脸添加到结果中
+                matched_faces.append((left, top, right-left, bottom-top))
+                matched_names.append(name)
+    
+    return matched_faces, matched_names
+
+def load_known_faces(directory='known_faces'):
+    """加载已知人脸图像并提取特征"""
+    global known_face_encodings, known_face_names
+    
+    if not has_face_recognition:
+        print("无法加载已知人脸: face_recognition库不可用")
+        return
+    
+    if not os.path.exists(directory):
+        print(f"已知人脸目录 '{directory}' 不存在，创建目录")
+        os.makedirs(directory)
+        print(f"请在 '{directory}' 目录中放置已知人员的图片")
+        print("图片文件名将被用作人员名称 (例如: 'john.jpg')")
+        return
+    
+    face_images = [f for f in os.listdir(directory) 
+                  if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    
+    if not face_images:
+        print(f"目录 '{directory}' 中没有找到图片")
+        return
+    
+    print(f"加载 {len(face_images)} 张已知人脸图片...")
+    
+    for image_file in face_images:
+        try:
+            # 从文件名获取人名 (不含扩展名)
+            person_name = os.path.splitext(image_file)[0]
+            
+            # 加载图像
+            image_path = os.path.join(directory, image_file)
+            image = face_recognition.load_image_file(image_path)
+            
+            # 尝试找到并编码人脸
+            face_encodings = face_recognition.face_encodings(image)
+            
+            if len(face_encodings) > 0:
+                # 使用第一个检测到的人脸
+                known_face_encodings.append(face_encodings[0])
+                known_face_names.append(person_name)
+                print(f"成功加载: {person_name}")
+            else:
+                print(f"警告: 在图片 {image_file} 中未检测到人脸")
+                
+        except Exception as e:
+            print(f"处理图片 {image_file} 时出错: {e}")
+    
+    print(f"已加载 {len(known_face_encodings)} 个已知人脸编码")
+
+def detect_faces(image, method='opencv'):
+    """使用指定方法检测人脸"""
+    global enable_recognition
+    
+    if method == 'opencv':
+        return detect_faces_opencv(image, improved=True), [None]
+    elif method == 'mtcnn' and has_mtcnn:
+        return detect_faces_mtcnn(image), [None]
+    elif method == 'face_recognition' and has_face_recognition:
+        return detect_faces_fr(image, recognize_specific=enable_recognition)
+    # 默认回退到OpenCV
+    return detect_faces_opencv(image, improved=True), [None]
+
+def process_frame():
+    """处理帧并显示结果（不再执行人脸检测）"""
+    global frame, current_method, enable_recognition, latest_results, results_frame_count
+    
+    while running:
+        if frame is None:
+            time.sleep(0.1)
+            continue
+            
+        # 制作显示帧的副本
+        display_frame = frame.copy()
+        
+        # 获取当前的识别结果
+        faces = []
+        names = []
+        reused_result = False
+        
+        with results_lock:
+            if latest_results is not None:
+                # 检查是否需要重用结果
+                if processing and results_frame_count < max_reuse_frames:
+                    faces, names, frame_shape = latest_results
+                    
+                    # 检查帧尺寸是否匹配，如果不匹配则不使用缓存结果
+                    if frame_shape[0] == display_frame.shape[0] and frame_shape[1] == display_frame.shape[1]:
+                        results_frame_count += 1
+                        reused_result = True
+                    else:
+                        faces = []
+                        names = []
+                elif not processing:
+                    faces, names, _ = latest_results
+                    results_frame_count = 0
+        
+        # 在画面上显示人脸框
+        for i, (x, y, w, h) in enumerate(faces):
+            # 绘制人脸框
+            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            
+            # 如果有名字，显示名字
+            if i < len(names) and names[i]:
+                cv2.putText(display_frame, names[i], (x, y-10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        # 添加状态信息
+        cv2.putText(display_frame, f"Method: {current_method}", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # 显示识别状态
+        if current_method == 'face_recognition' and enable_recognition:
+            cv2.putText(display_frame, "Mode: Specific Person Recognition", (10, 60), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(display_frame, f"Recognized {len(faces)} known faces", (10, 90), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(display_frame, "Mode: All Faces Detection", (10, 60), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(display_frame, f"Detect {len(faces)} faces", (10, 90), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # 显示缓存状态    
+        if reused_result:
+            cv2.putText(display_frame, f"Using cached result (frame {results_frame_count}/{max_reuse_frames})", 
+                        (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # 显示处理状态
+        processing_status = "Processing..." if processing else "Ready"
+        cv2.putText(display_frame, f"Status: {processing_status}", (10, 120), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # 显示操作指引
+        cv2.putText(display_frame, "use 'space' to change method", (10, display_frame.shape[0] - 70), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(display_frame, "use 'r' to toggle recognition mode", (10, display_frame.shape[0] - 40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(display_frame, "use 'esc' to exit", (10, display_frame.shape[0] - 10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        # 显示帧
+        cv2.imshow("人脸检测测试", cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB))
+        
+        # 处理按键
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:  # ESC键
+            break
+        elif key == 32:  # 空格键
+            # 切换到下一个可用的检测方法
+            available_methods = ['opencv']
+            if has_mtcnn:
+                available_methods.append('mtcnn')
+            if has_face_recognition:
+                available_methods.append('face_recognition')
+                
+            current_idx = available_methods.index(current_method) if current_method in available_methods else 0
+            current_method = available_methods[(current_idx + 1) % len(available_methods)]
+            print(f"切换到检测方法: {current_method}")
+        elif key == ord('r'):  # 'r'键
+            # 切换识别模式
+            if current_method == 'face_recognition' and has_face_recognition:
+                enable_recognition = not enable_recognition
+                mode = "启用" if enable_recognition else "禁用"
+                print(f"{mode}特定人员识别模式")
+            else:
+                print("特定人员识别仅在face_recognition模式下可用")
+    
+    cv2.destroyAllWindows()
+
+def video_thread_function(tello):
+    """处理视频流"""
+    global frame, running, latest_frame
+
+    frame_read = tello.get_frame_read()
+
+    try:
+        while running:
+            current_frame = frame_read.frame
+            if current_frame is not None:
+                # 创建新的副本以避免引用问题
+                frame = current_frame.copy()  # 用于兼容旧代码
+                latest_frame = current_frame.copy()  # 用于人脸检测线程
+                
+                # 打印调试信息
+                if running and (int(time.time()) % 5 == 0):  # 每5秒打印一次
+                    print(f"视频流正常: 帧大小 {latest_frame.shape if latest_frame is not None else 'None'}")
+            
+            time.sleep(0.03)  # 限制帧率以减少CPU使用
+    except Exception as e:
+        print(f"视频流错误: {e}")
+    finally:
+        print("视频线程结束")
+
+def main():
+    global running, enable_recognition, latest_frame, processing
+    
+    # 初始化状态
+    latest_frame = None
+    processing = False
+    
+    print(f"测试人脸识别 - 使用{current_method}方法 - 不起飞模式")
+    
+    # 如果启用特定人员识别，加载已知人脸
+    if enable_recognition and current_method == 'face_recognition':
+        load_known_faces(known_faces_dir)
+    elif enable_recognition and current_method != 'face_recognition':
+        print("特定人员识别仅在face_recognition模式下可用，已忽略")
+        enable_recognition = False
+    
+    try:
+        # 连接到Tello
+        tello = Tello()
+        tello.connect()
+        print(f"电池电量: {tello.get_battery()}%")
+        
+        # 启动视频流
+        tello.streamoff()
+        tello.streamon()
+        print("视频流已启动")
+        
+        # 等待视频流初始化
+        time.sleep(2)
+        
+        # 启动视频线程
+        video_thread = threading.Thread(target=video_thread_function, args=(tello,))
+        video_thread.daemon = True
+        video_thread.start()
+        
+        # 确保视频线程已经获取到帧
+        print("等待视频流初始化...")
+        timeout = 10  # 10秒超时
+        start_time = time.time()
+        while latest_frame is None:
+            if time.time() - start_time > timeout:
+                print("等待视频流超时，可能无法正常工作")
+                break
+            time.sleep(0.1)
+        
+        if latest_frame is not None:
+            print("视频流已准备就绪")
+        
+        # 启动人脸检测线程
+        detection_thread = threading.Thread(target=face_detection_thread)
+        detection_thread.daemon = True
+        detection_thread.start()
+        print("人脸检测线程已启动")
+        
+        # 启动显示线程（主线程）
+        process_frame()
+        
+    except Exception as e:
+        print(f"发生错误: {e}")
+    
+    finally:
+        # 清理资源
+        running = False
+        print("关闭视频流...")
+        try:
+            tello.streamoff()
+        except:
+            pass
+        print("测试结束")
+
+if __name__ == "__main__":
+    main()
