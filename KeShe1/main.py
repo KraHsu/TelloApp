@@ -11,7 +11,7 @@ from PIDController import PIDController
 from ultralytics import YOLO  # 导入YOLO
 import math  # 导入 math 以便后续可能需要
 
-# --- 配置 ---
+# --- 配置 --
 MODEL_PATH = "best.pt"  # YOLOv8 模型文件路径
 TARGET_CLASSES = ["bit", "drone", "card"]  # 需要检测并获取坐标的目标类别
 CONFIDENCE_THRESHOLD = 0.8  # 置信度阈值 (与原代码一致)
@@ -56,6 +56,7 @@ OUTPUT = {
     "vz": 0,
     # yaw速度，逆时针+
     "vr": 0,
+    "d": 0
 }
 
 # cv: pid
@@ -122,6 +123,19 @@ def add_annotation_area(frame, center_x, center_y, distance):
 
 def detect_task(frame_read):
     global RUNNING, CROP_HEIGHT, CONFIDENCE_THRESHOLD
+    
+     # 获取视频帧的尺寸
+    frame_height, frame_width = 240, 320
+
+    # 创建视频写入器
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # 使用MP4格式
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+    save_dir = "recordings"  # 创建保存目录
+    os.makedirs(save_dir, exist_ok=True)
+    video_path = os.path.join(save_dir, f"res_{timestamp}.mp4")
+
+    out = cv2.VideoWriter(video_path, fourcc, 30.0, (frame_width, frame_height))
 
     no_target_cnt = 0
 
@@ -130,6 +144,9 @@ def detect_task(frame_read):
 
     pid_vx = PIDController(0.12, 0.07, 0, 0, (-100, 100), (-7, 7))
     pid_vy = PIDController(0.12, 0.07, 0, 0, (-100, 100), (-7, 7))
+    
+    pid_vx_s = PIDController(0.1, 0.07, 0, 0, (-100, 100), (-7, 7))
+    pid_vy_s = PIDController(0.1, 0.07, 0, 0, (-100, 100), (-7, 7))
 
     while RUNNING:
         # --- 获取帧 ---
@@ -225,10 +242,18 @@ def detect_task(frame_read):
                 #     output["vz"] = pid_height.update(tl.query_distance_tof(), 1 / 30)
                 dx = TARGET_CENTER_X - center_x
                 dy = TARGET_CENTER_Y - center_y
-
-                OUTPUT["vy"] = pid_vx.update(TARGET_CENTER_X - center_x)
-                OUTPUT["vx"] = -pid_vy.update(TARGET_CENTER_Y - center_y)
                 distance = np.sqrt(dx**2 + dy**2)
+                
+                if distance > 20:
+                    OUTPUT["vy"] = pid_vx.update(TARGET_CENTER_X - center_x)
+                    OUTPUT["vx"] = -pid_vy.update(TARGET_CENTER_Y - center_y)
+                    pid_vx_s.reset()
+                    pid_vy_s.reset()
+                else:
+                    pid_vx.reset()
+                    pid_vy.reset()
+                    OUTPUT["vy"] = pid_vx_s.update(TARGET_CENTER_X - center_x)
+                    OUTPUT["vx"] = -pid_vy_s.update(TARGET_CENTER_Y - center_y)
 
             except Exception as e:
                 print("Warning: ", e)
@@ -245,6 +270,8 @@ def detect_task(frame_read):
                 no_target_cnt = 0
             else:
                 no_target_cnt += 1
+        
+        OUTPUT["d"] = distance
 
         # --- 显示处理后的帧 ---
         cv2.circle(
@@ -257,21 +284,28 @@ def detect_task(frame_read):
 
         cropped_frame = add_annotation_area(cropped_frame, center_x, center_y, distance)
         cv2.imshow("Tello Cropped Detection", cropped_frame)
+        out.write(cropped_frame)
+        
+        if distance >= 0 and distance <= 4:
+            cv2.imwrite(f"result_{TARGET_TYPE}.jpg", cropped_frame)
+            
         if cv2.waitKey(1) & 0xFF == 27:
             RUNNING = False
 
     # --- 退出条件 ---
     dc.save_to_csv()
+    out.release()
+    time.sleep(1)
     print("退出检测")
 
 
 def keep_height(tl: Tello):
     global RUNNING, TARGET_HEIGHT, OUTPUT
 
-    pid_height = PIDController(1.7, 0.1, 0, TARGET_HEIGHT, (-100, 100))
+    pid_height = PIDController(1.2, 0.1, 0, TARGET_HEIGHT, (-30, 30), (-10, 10))
     while RUNNING:
         try:
-            current_heigh = tl.query_distance_tof()
+            current_heigh = tl.get_distance_tof()
             o = pid_height.update(current_heigh)
             OUTPUT["vz"] = o
         except Exception:
@@ -305,11 +339,14 @@ def main(tl: Tello):
     tl.connect()
     print(f"电池：{tl.query_battery()}%")
     print(f"状态：{tl.get_current_state()}")
+    # quit()
     tl.streamon()
     tl.set_video_fps(Tello.FPS_30)
     tl.set_video_bitrate(Tello.BITRATE_2MBPS)
     tl.set_video_direction(Tello.CAMERA_DOWNWARD)
     tl.set_video_resolution(Tello.RESOLUTION_480P)
+    
+    tl.enable_mission_pads()
 
     frame_read = tl.get_frame_read()
 
@@ -329,13 +366,51 @@ def main(tl: Tello):
     begin = time.time()
     tl.send_rc_control(0, 0, 0, 0)
 
-    CONTROL_MODE_TARGET = True
+    CONTROL_MODE_TARGET = False
     TARGET_TYPE = "card"
 
     Thread(target=keep_height, args=(tl,)).start()
     Thread(target=control_tl, args=(tl,)).start()
+    
+    time.sleep(4)
+    print("高度稳定")
 
-    while time.time() - begin < 120 and RUNNING:
+    # 寻找第一张
+    CONTROL_MODE_TARGET = False
+    print("开环前飞")
+    
+    while RUNNING:
+        if tl.get_mission_pad_id() == -1:
+            tl.send_rc_control(0, 20, int(OUTPUT["vz"]), 0)
+        else:
+            break
+        time.sleep(0.001)
+        
+    tl.move_forward(30)
+    
+    CONTROL_MODE_TARGET = True
+    print(f"开始追踪：{TARGET_TYPE}")
+
+    while OUTPUT["d"] > 4 or OUTPUT["d"] < 0:
+        time.sleep(0.001)
+    
+    # 寻找第二张
+    CONTROL_MODE_TARGET = False
+    TARGET_TYPE = "bit"
+    
+    print("开环右飞")
+    
+    while RUNNING:
+        if tl.get_mission_pad_id() != 2:
+            tl.send_rc_control(20, 0, int(OUTPUT["vz"]), 0)
+        else:
+            break
+        time.sleep(0.001)
+
+    CONTROL_MODE_TARGET = True
+    print(f"开始追踪：{TARGET_TYPE}")
+    
+    while OUTPUT["d"] > 4 or OUTPUT["d"] < 0:
         time.sleep(0.001)
 
     tl.send_rc_control(0, 0, 0, 0)
@@ -358,3 +433,5 @@ if __name__ == "__main__":
         tl.send_rc_control(0, 0, 0, 0)
         tl.land()
         tl.streamoff()
+        
+    time.sleep(4)
