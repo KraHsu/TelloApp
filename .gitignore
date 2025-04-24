@@ -361,3 +361,5 @@ inspectcode.xml
 # Roo/Cline ignore files
 .rooignore
 .clineignore
+
+yolov8/
