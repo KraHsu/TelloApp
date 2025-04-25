@@ -19,39 +19,36 @@ from utils.data_collector import DataCollector
 from utils.helpers import ensure_dir
 
 
-def setup_logging():
-    """
-    设置日志系统
-    """
+def setup_logging() -> logging.Logger:
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     ensure_dir(log_dir)
 
     log_file = os.path.join(log_dir, f"tello_{time.strftime('%Y%m%d_%H%M%S')}.log")
 
-    # 配置根日志记录器
+    # 中文
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    console_handler = logging.StreamHandler(sys.stdout)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)],
+        handlers=[file_handler, console_handler],
     )
 
-    # 降低DJITelloPy日志级别，减少输出
     logging.getLogger("djitellopy").setLevel(logging.WARNING)
-
     return logging.getLogger("tello_tracking")
 
 
-def initialize_tello():
+def initialize_tello() -> Tello:
     """
     初始化Tello对象
 
     返回:
         Tello: 初始化后的Tello对象
     """
-    # 创建Tello对象
     tello = Tello()
 
-    # DEBUG
+    # DEBUG 注释这部分内容以启用飞行
     no_func = lambda *args: 1
 
     tello.takeoff = no_func
@@ -68,7 +65,6 @@ def initialize_tello():
     tello.emergency = no_func
 
     try:
-        # 尝试连接到Tello
         tello.connect()
         logging.info(f"成功连接到Tello，电池电量: {tello.get_battery()}%")
         tello.streamon()
@@ -76,8 +72,7 @@ def initialize_tello():
         tello.set_video_bitrate(Tello.BITRATE_2MBPS)
         tello.set_video_direction(Tello.CAMERA_DOWNWARD)
         tello.set_video_resolution(Tello.RESOLUTION_480P)
-
-        tello.enable_mission_pads()
+        logging.info(f"Tello 相机已打开")
 
         return tello
     except Exception as e:
@@ -139,7 +134,8 @@ def run_mission(tello: Tello):
                         ]
                     )
 
-                time.sleep(0.02)  # 50Hz更新频率
+                # 50Hz
+                time.sleep(0.02)
 
         # 启动处理线程
         process_thread = Thread(target=process_detection_result)

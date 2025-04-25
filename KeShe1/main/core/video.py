@@ -2,6 +2,7 @@
 """
 视频处理模块
 """
+import logging
 import os
 import cv2
 import time
@@ -23,7 +24,12 @@ class VideoProcessor:
     """
 
     def __init__(
-        self, frame_read, detector, save_video=True, font_path=VIDEO_CONFIG["FONT_PATH"]
+        self,
+        frame_read,
+        detector,
+        save_video=True,
+        font_path=VIDEO_CONFIG["FONT_PATH"],
+        logger: logging.Logger = logging.getLogger("tello_tracking"),
     ):
         self.frame_read = frame_read
         self.detector = detector
@@ -32,6 +38,7 @@ class VideoProcessor:
         self.running = False
         self.target_type = None
         self.stop_event = Event()
+        self.logger = logger
 
         # 视频帧处理参数
         self.crop_width = VIDEO_CONFIG["CROP_WIDTH"]
@@ -72,7 +79,7 @@ class VideoProcessor:
         self.video_writer = cv2.VideoWriter(
             video_path, fourcc, 30.0, (frame_width, frame_height)
         )
-        print(f"视频将保存到: {video_path}")
+        self.logger.info(f"视频将保存到: {video_path}")
 
     def start(self, target_type=None):
         """
@@ -82,7 +89,7 @@ class VideoProcessor:
             target_type (str, optional): 目标类型
         """
         if self.running:
-            print("视频处理器已在运行")
+            self.logger.info("视频处理器已在运行")
             return
 
         self.running = True
@@ -92,7 +99,7 @@ class VideoProcessor:
         self.process_thread = Thread(target=self._process_video)
         self.process_thread.daemon = True
         self.process_thread.start()
-        print("视频处理器已启动")
+        self.logger.info("视频处理器已启动")
 
     def stop(self):
         """
@@ -109,7 +116,7 @@ class VideoProcessor:
             self.video_writer = None
 
         cv2.destroyAllWindows()
-        print("视频处理器已停止")
+        self.logger.info("视频处理器已停止")
 
     def set_target_type(self, target_type):
         """
@@ -119,7 +126,7 @@ class VideoProcessor:
             target_type (str): 目标类型
         """
         self.target_type = target_type
-        print(f"目标类型已设置为: {target_type}")
+        self.logger.info(f"目标类型已设置为: {target_type}")
 
     def get_current_result(self):
         """
@@ -147,7 +154,7 @@ class VideoProcessor:
             file_name (str, optional): 文件名，如不指定则使用时间戳
         """
         if not hasattr(self, "current_frame") or self.current_frame is None:
-            print("没有可用的帧")
+            self.logger.warning("没有可用的帧")
             return
 
         if file_name is None:
@@ -159,7 +166,7 @@ class VideoProcessor:
 
         file_path = os.path.join(save_dir, file_name)
         cv2.imwrite(file_path, self.current_frame)
-        print(f"已保存当前帧到: {file_path}")
+        self.logger.info(f"已保存当前帧到: {file_path}")
 
     def _process_video(self):
         """
@@ -171,7 +178,7 @@ class VideoProcessor:
             # 获取帧
             frame = self.frame_read.frame
             if frame is None:
-                print("未能获取到帧，可能连接中断")
+                self.logger.warning("未能获取到帧，可能连接中断")
                 time.sleep(0.5)  # 短暂等待后重试
                 continue
 
@@ -232,4 +239,4 @@ class VideoProcessor:
             self.video_writer.release()
 
         cv2.destroyAllWindows()
-        print("视频处理线程已结束")
+        self.logger.info("视频处理线程已结束")

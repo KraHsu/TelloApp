@@ -2,6 +2,7 @@
 """
 数据收集器模块
 """
+import logging
 import os
 import csv
 import time
@@ -16,11 +17,16 @@ class DataCollector:
         file_path (str): 保存数据的CSV文件路径
     """
 
-    def __init__(self, file_path):
+    def __init__(
+        self,
+        file_path: str,
+        logger: logging.Logger = logging.getLogger("tello_tracking"),
+    ):
         self.file_path = file_path
         self.data = []
         self.headers = set()
         self.start_time = time.time()
+        self.logger = logger
 
     def collect_datas(self, data_points):
         """
@@ -68,7 +74,7 @@ class DataCollector:
                 row = {field: entry.get(field, "") for field in fieldnames}
                 writer.writerow(row)
 
-        print(f"数据已保存至: {self.file_path}")
+        self.logger.info(f"数据已保存至: {self.file_path}")
 
     def get_data_summary(self):
         """

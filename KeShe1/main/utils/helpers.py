@@ -152,7 +152,6 @@ def cv2_put_chinese_text(img, text, position, font_path, font_size, color):
     """
     # 判断字体文件是否存在
     if not os.path.exists(font_path):
-        print(f"警告: 字体文件不存在 {font_path}，使用默认字体")
         # 回退到OpenCV默认字体
         cv2.putText(
             img,
@@ -274,18 +273,3 @@ def calculate_distance(x1, y1, x2, y2):
         float: 两点之间的距离
     """
     return np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-
-def show_drone_message(tello, message):
-    """
-    在Tello无人机LED矩阵上显示消息
-
-    参数:
-        tello: Tello对象
-        message (str): 要显示的消息
-    """
-    try:
-        tello.send_expansion_command(f"mled s r {message}")
-        tello.send_expansion_command(f"mled sl 255")
-    except Exception as e:
-        print(f"LED显示错误: {e}")

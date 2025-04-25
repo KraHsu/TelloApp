@@ -2,6 +2,7 @@
 """
 目标检测模块
 """
+import logging
 import os
 import time
 import cv2
@@ -28,12 +29,14 @@ class ObjectDetector:
         confidence_threshold=MODEL_CONFIG["CONFIDENCE_THRESHOLD"],
         target_classes=MODEL_CONFIG["TARGET_CLASSES"],
         device=MODEL_CONFIG["DEVICE"],
+        logger: logging.Logger = logging.getLogger("tello_tracking"),
     ):
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.target_classes = target_classes
         self.device = device
         self.model = None
+        self.logger = logger
 
         # 加载模型
         self._load_model()
@@ -45,18 +48,18 @@ class ObjectDetector:
         try:
             self.model = YOLO(self.model_path)
             self.model.to(self.device)
-            print(f"成功加载模型: {self.model_path}")
+            self.logger.info(f"成功加载模型: {self.model_path}")
 
             # 检查模型类别名称是否包含目标类别
             model_classes = self.model.names
-            print(f"模型包含的类别: {list(model_classes.values())}")
+            self.logger.info(f"模型包含的类别: {list(model_classes.values())}")
 
             for target in self.target_classes:
                 if target not in model_classes.values():
-                    print(f"警告: 目标类别 '{target}' 可能不在模型类别中!")
+                    self.logger.warning(f"目标类别 '{target}' 可能不在模型类别中!")
 
         except Exception as e:
-            print(f"加载YOLO模型时出错: {e}")
+            self.logger.error(f"加载YOLO模型时出错: {e}")
             raise
 
     def detect(self, frame, target_type=None):

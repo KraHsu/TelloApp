@@ -2,6 +2,7 @@
 """
 飞行控制模块
 """
+import logging
 import time
 import math
 from threading import Thread, Event
@@ -19,10 +20,13 @@ class DroneController:
         tello (Tello): Tello对象
     """
 
-    def __init__(self, tello: Tello):
+    def __init__(
+        self, tello: Tello, logger: logging.Logger = logging.getLogger("tello_tracking")
+    ):
         self.tello: Tello = tello
         self.running = False
         self.stop_event = Event()
+        self.logger = logger
 
         # 控制模式
         self.control_mode_target = False
@@ -103,7 +107,7 @@ class DroneController:
         启动控制器
         """
         if self.running:
-            print("控制器已在运行")
+            self.logger.info("控制器已在运行")
             return
 
         self.running = True
@@ -119,7 +123,7 @@ class DroneController:
         self.control_thread.daemon = True
         self.control_thread.start()
 
-        print("无人机控制器已启动")
+        self.logger.info("无人机控制器已启动")
 
     def stop(self):
         """
@@ -138,7 +142,7 @@ class DroneController:
         if self.control_thread and self.control_thread.is_alive():
             self.control_thread.join(timeout=2.0)
 
-        print("无人机控制器已停止")
+        self.logger.info("无人机控制器已停止")
 
     def set_target_mode(self, enabled):
         """
@@ -148,7 +152,7 @@ class DroneController:
             enabled (bool): 是否启用目标跟踪模式
         """
         self.control_mode_target = enabled
-        print(f"目标跟踪模式: {'已启用' if enabled else '已禁用'}")
+        self.logger.info(f"目标跟踪模式: {'已启用' if enabled else '已禁用'}")
 
     def update_target_status(
         self, detected, center_x=None, center_y=None, distance=None
@@ -216,7 +220,7 @@ class DroneController:
         h = lambda t: 50 * g(t) + 10
         clamp = create_smooth_clamp(a, b, delta)
 
-        print(f"执行{direction}方向移动，持续{duration}秒")
+        self.logger.info(f"执行{direction}方向移动，持续{duration}秒")
 
         # 执行移动
         begin = time.time()
@@ -237,7 +241,7 @@ class DroneController:
 
         # 恢复原始控制模式
         self.control_mode_target = original_mode
-        print("移动完成")
+        self.logger.info("移动完成")
 
     def search_for_target(self, direction="F", speed=20):
         """
@@ -251,7 +255,7 @@ class DroneController:
         original_mode = self.control_mode_target
         self.control_mode_target = False
 
-        print(f"开始搜索目标，方向: {direction}")
+        self.logger.info(f"开始搜索目标，方向: {direction}")
 
         while not self.target_got and self.running:
             if direction == "F":
@@ -267,7 +271,7 @@ class DroneController:
 
         # 恢复原始控制模式
         self.control_mode_target = original_mode
-        print("目标已找到" if self.target_got else "搜索结束")
+        self.logger.info("目标已找到" if self.target_got else "搜索结束")
 
     def wait_for_target_approach(
         self, min_distance=CONTROL_CONFIG["MIN_TARGET_DISTANCE"]
@@ -281,15 +285,15 @@ class DroneController:
         返回:
             bool: 是否成功接近目标
         """
-        print(f"等待接近目标 (距离 <= {min_distance})")
+        self.logger.info(f"等待接近目标 (距离 <= {min_distance})")
 
         while self.running:
             # if not self.target_got:
-            #     print("目标丢失，接近终止")
+            #     self.logger.warning("目标丢失，接近终止")
             #     return False
 
             if self.output["d"] > 0 and self.output["d"] <= min_distance:
-                print(f"成功接近目标，距离: {self.output['d']:.2f}")
+                self.logger.info(f"成功接近目标，距离: {self.output['d']:.2f}")
                 return True
 
             time.sleep(0.1)
@@ -305,12 +309,12 @@ class DroneController:
                 current_height = self.tello.get_distance_tof()
                 self.output["vz"] = self.pid_height.update(current_height)
             except Exception as e:
-                print(f"高度控制异常: {e}")
+                self.logger.error(f"高度控制异常: {e}")
 
             time.sleep(0.01)
 
         self.output["vz"] = 0
-        print("高度控制线程已结束")
+        self.logger.info("高度控制线程已结束")
 
     def _control_loop(self):
         """
@@ -340,4 +344,4 @@ class DroneController:
 
         # 停止移动
         self.tello.send_rc_control(0, 0, 0, 0)
-        print("控制线程已结束")
+        self.logger.info("控制线程已结束")

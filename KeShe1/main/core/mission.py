@@ -24,7 +24,11 @@ class MissionExecutor:
     """
 
     def __init__(
-        self, tello: Tello, controller: DroneController, video_processor: VideoProcessor
+        self,
+        tello: Tello,
+        controller: DroneController,
+        video_processor: VideoProcessor,
+        logger: logging.Logger = logging.getLogger("tello_tracking"),
     ):
         self.tello = tello
         self.controller = controller
@@ -34,7 +38,9 @@ class MissionExecutor:
         self.target_sequence = MISSION_CONFIG["TARGET_SEQUENCE"]
         self.mission_complete = False
 
-    def start_mission(self):
+        self.logger = logger
+
+    def start_mission(self) -> bool:
         """
         开始执行任务
 
@@ -42,7 +48,7 @@ class MissionExecutor:
             bool: 任务是否成功启动
         """
         if self.running:
-            print("任务已在执行中")
+            self.logger.info("任务已在执行中")
             return False
 
         self.running = True
@@ -60,9 +66,9 @@ class MissionExecutor:
         停止当前任务
         """
         self.running = False
-        print("任务已停止")
+        self.logger.info("任务已停止")
 
-    def is_mission_complete(self):
+    def is_mission_complete(self) -> bool:
         """
         检查任务是否完成
 
@@ -76,7 +82,7 @@ class MissionExecutor:
         执行预定义的任务序列
         """
         try:
-            print("开始执行任务...")
+            self.logger.info("开始执行任务...")
 
             # 初始化连接
             self._init_drone()
@@ -89,7 +95,7 @@ class MissionExecutor:
                 if not self.running:
                     break
 
-                print(f"开始执行第{i+1}阶段任务: 寻找{target_type}")
+                self.logger.info(f"开始执行第{i+1}阶段任务: 寻找{target_type}")
                 self._locate_and_approach_target(target_type, i)
 
             # 返航
@@ -98,19 +104,19 @@ class MissionExecutor:
                 self.mission_complete = True
 
         except Exception as e:
-            print(f"任务执行出错: {e}")
+            self.logger.error(f"任务执行出错: {e}")
             logging.exception("任务执行异常")
         finally:
             # 确保安全降落
             self._ensure_safe_landing()
             self.running = False
-            print("任务执行结束")
+            self.logger.info("任务执行结束")
 
     def _init_drone(self):
         """
         初始化无人机连接和设置
         """
-        print("初始化无人机...")
+        self.logger.info("初始化无人机...")
 
         # 启动控制器
         self.controller.start()
@@ -118,27 +124,27 @@ class MissionExecutor:
         # 启动视频处理器
         self.video_processor.start()
 
-        print(f"无人机电池电量: {self.tello.get_battery()}%")
+        self.logger.info(f"无人机电池电量: {self.tello.get_battery()}%")
 
     def _takeoff_and_stabilize(self):
         """
         起飞并稳定高度
         """
-        print("准备起飞...")
+        self.logger.info("准备起飞...")
 
         # 起飞
         takeoff_start = time.time()
         self.tello.takeoff()
-        print(f"起飞耗时: {time.time() - takeoff_start:.2f}秒")
+        self.logger.info(f"起飞耗时: {time.time() - takeoff_start:.2f}秒")
 
         # 上升到指定高度
         self.tello.move_up(50)
 
         # 悬停并稳定
         self.tello.send_rc_control(0, 0, 0, 0)
-        time.sleep(1)
+        time.sleep(0.2)
 
-        print("高度稳定，准备执行任务")
+        self.logger.info("高度稳定，准备执行任务")
 
     def _locate_and_approach_target(self, target_type, stage_index):
         """
@@ -161,7 +167,7 @@ class MissionExecutor:
             direction = move_config["direction"]
             duration = move_config["duration"]
 
-            print(f"执行开环{direction}方向移动")
+            self.logger.info(f"执行开环{direction}方向移动")
             self.controller.execute_move(direction, duration)
 
         # 搜索目标
@@ -169,7 +175,7 @@ class MissionExecutor:
 
         # 如果找到目标，启用目标跟踪
         if self.controller.target_got:
-            print(f"已找到目标: {target_type}，开始追踪")
+            self.logger.info(f"已找到目标: {target_type}，开始追踪")
             self.controller.set_target_mode(True)
 
             # 等待接近目标
@@ -178,17 +184,17 @@ class MissionExecutor:
             if approached:
                 # 保存图像
                 self.video_processor.save_current_frame(f"result_{target_type}.jpg")
-                print(f"已成功接近并拍照: {target_type}")
+                self.logger.info(f"已成功接近并拍照: {target_type}")
             else:
-                print(f"未能成功接近目标: {target_type}")
+                self.logger.warning(f"未能成功接近目标: {target_type}")
         else:
-            print(f"未找到目标: {target_type}")
+            self.logger.error(f"未找到目标: {target_type}")
 
     def _return_home(self):
         """
         执行返航程序
         """
-        print("开始返航...")
+        self.logger.info("开始返航...")
 
         # 关闭目标跟踪模式
         self.controller.set_target_mode(False)
@@ -210,7 +216,7 @@ class MissionExecutor:
 
         # 稳定悬停
         self.tello.send_rc_control(0, 0, 0, 0)
-        print("返航完成")
+        self.logger.info("返航完成")
 
     def _ensure_safe_landing(self):
         """
@@ -232,10 +238,10 @@ class MissionExecutor:
             # 关闭视频流
             self.tello.streamoff()
 
-            print("无人机已安全降落")
+            self.logger.info("无人机已安全降落")
 
         except Exception as e:
-            print(f"降落过程出错: {e}")
+            self.logger.error(f"降落过程出错: {e}")
             # 尝试紧急降落
             try:
                 self.tello.emergency()
