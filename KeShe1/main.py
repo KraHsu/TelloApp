@@ -11,6 +11,8 @@ from PIDController import PIDController
 from ultralytics import YOLO  # 导入YOLO
 import math  # 导入 math 以便后续可能需要
 
+from Utils import *
+
 # --- 配置 --
 MODEL_PATH = "best.pt"  # YOLOv8 模型文件路径
 TARGET_CLASSES = ["bit", "drone", "card"]  # 需要检测并获取坐标的目标类别
@@ -40,6 +42,7 @@ TARGET_HEIGHT = 100
 RUNNING = True
 CONTROL_MODE_TARGET = False
 TARGET_TYPE = "card"
+TARGET_GOT = False
 
 
 def show_cmd(tl: Tello, c: str):
@@ -56,7 +59,7 @@ OUTPUT = {
     "vz": 0,
     # yaw速度，逆时针+
     "vr": 0,
-    "d": 0
+    "d": 0,
 }
 
 # cv: pid
@@ -122,10 +125,10 @@ def add_annotation_area(frame, center_x, center_y, distance):
 
 
 def detect_task(frame_read):
-    global RUNNING, CROP_HEIGHT, CONFIDENCE_THRESHOLD
-    
-     # 获取视频帧的尺寸
-    frame_height, frame_width = 240, 320
+    global RUNNING, CROP_HEIGHT, CONFIDENCE_THRESHOLD, TARGET_GOT
+
+    # 获取视频帧的尺寸
+    frame_height, frame_width = 320 + 60, 240
 
     # 创建视频写入器
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # 使用MP4格式
@@ -144,9 +147,9 @@ def detect_task(frame_read):
 
     pid_vx = PIDController(0.12, 0.07, 0, 0, (-100, 100), (-7, 7))
     pid_vy = PIDController(0.12, 0.07, 0, 0, (-100, 100), (-7, 7))
-    
-    pid_vx_s = PIDController(0.1, 0.07, 0, 0, (-100, 100), (-7, 7))
-    pid_vy_s = PIDController(0.1, 0.07, 0, 0, (-100, 100), (-7, 7))
+
+    pid_vx_s = PIDController(0.1, 0.07, 0, 0, (-100, 100), (-5, 5))
+    pid_vy_s = PIDController(0.1, 0.07, 0, 0, (-100, 100), (-5, 5))
 
     while RUNNING:
         # --- 获取帧 ---
@@ -235,6 +238,7 @@ def detect_task(frame_read):
                     break
 
         if center_x != None and center_y != None:
+            TARGET_GOT = True
             dc.collect_datas([("x", center_x), ("y", center_y)])
 
             # --- 计算pid --
@@ -243,8 +247,8 @@ def detect_task(frame_read):
                 dx = TARGET_CENTER_X - center_x
                 dy = TARGET_CENTER_Y - center_y
                 distance = np.sqrt(dx**2 + dy**2)
-                
-                if distance > 20:
+
+                if distance > 30:
                     OUTPUT["vy"] = pid_vx.update(TARGET_CENTER_X - center_x)
                     OUTPUT["vx"] = -pid_vy.update(TARGET_CENTER_Y - center_y)
                     pid_vx_s.reset()
@@ -254,11 +258,25 @@ def detect_task(frame_read):
                     pid_vy.reset()
                     OUTPUT["vy"] = pid_vx_s.update(TARGET_CENTER_X - center_x)
                     OUTPUT["vx"] = -pid_vy_s.update(TARGET_CENTER_Y - center_y)
+                    
+                # fuck
+                if center_x > TARGET_CENTER_X:
+                    center_x -= 1
+                elif center_x < TARGET_CENTER_X:
+                    center_x += 1
+                
+                if center_y > TARGET_CENTER_Y:
+                    center_y -= 1
+                elif center_y < TARGET_CENTER_Y:
+                    center_y += 1
+                    
+                distance = np.sqrt(dx**2 + dy**2)
 
             except Exception as e:
                 print("Warning: ", e)
                 continue
         else:
+            TARGET_GOT = False
             distance = -1
             center_x = -1
             center_y = -1
@@ -270,7 +288,7 @@ def detect_task(frame_read):
                 no_target_cnt = 0
             else:
                 no_target_cnt += 1
-        
+
         OUTPUT["d"] = distance
 
         # --- 显示处理后的帧 ---
@@ -285,10 +303,10 @@ def detect_task(frame_read):
         cropped_frame = add_annotation_area(cropped_frame, center_x, center_y, distance)
         cv2.imshow("Tello Cropped Detection", cropped_frame)
         out.write(cropped_frame)
-        
+
         if distance >= 0 and distance <= 4:
             cv2.imwrite(f"result_{TARGET_TYPE}.jpg", cropped_frame)
-            
+
         if cv2.waitKey(1) & 0xFF == 27:
             RUNNING = False
 
@@ -323,7 +341,7 @@ def control_tl(tl: Tello):
             tl.send_rc_control(
                 int(OUTPUT["vy"]), int(OUTPUT["vx"]), int(OUTPUT["vz"]), 0
             )
-            print(int(OUTPUT["vy"]), int(OUTPUT["vx"]), int(OUTPUT["vz"]))
+            # print(int(OUTPUT["vy"]), int(OUTPUT["vx"]), int(OUTPUT["vz"]))
         else:
             ...
         time.sleep(0.001)
@@ -331,8 +349,35 @@ def control_tl(tl: Tello):
     OUTPUT["vz"] = 0
 
 
-def main(tl: Tello):
-    global RUNNING, CONTROL_MODE_TARGET, TARGET_TYPE
+def e_fly(tl: Tello, direction = "F"):
+    a = 20
+    b = 50
+    delta = 5
+    g = lambda t: 4 * sigmoid(t) * (1 - sigmoid(t))
+    h = lambda t: 50 * g(t) + 10
+    clamp = create_smooth_clamp(a, b, delta)
+
+    time.sleep(0.1)
+
+    begin = time.time()
+    while time.time() - begin < 5:
+        t = time.time() - begin
+
+        v = clamp(h(t))
+
+        if direction == "F":
+            tl.send_rc_control(0, int(v), 0, 0)
+        elif direction == "R":
+            tl.send_rc_control(int(v), 0, 0, 0)
+        elif direction == "B":
+            tl.send_rc_control(0, -int(v), 0, 0)
+        elif direction == "L":
+            tl.send_rc_control(-int(v), 0, 0, 0)
+            
+        time.sleep(0.001)
+
+def main(tl: Tello, joins):
+    global RUNNING, CONTROL_MODE_TARGET, TARGET_TYPE, TARGET_GOT
 
     Tello.LOGGER.setLevel(logging.WARNING)
 
@@ -345,7 +390,7 @@ def main(tl: Tello):
     tl.set_video_bitrate(Tello.BITRATE_2MBPS)
     tl.set_video_direction(Tello.CAMERA_DOWNWARD)
     tl.set_video_resolution(Tello.RESOLUTION_480P)
-    
+
     tl.enable_mission_pads()
 
     frame_read = tl.get_frame_read()
@@ -355,9 +400,11 @@ def main(tl: Tello):
     # tl.send_rc_control = lambda *arg: ...
     # tl.land = lambda *arg: ...
 
+    t = Thread(target=detect_task, args=(frame_read,))
+    t.start()
+    joins.append(t)
+    
     tl.takeoff()
-
-    Thread(target=detect_task, args=(frame_read,)).start()
 
     begin = time.time()
     tl.move_up(50)
@@ -369,69 +416,111 @@ def main(tl: Tello):
     CONTROL_MODE_TARGET = False
     TARGET_TYPE = "card"
 
-    Thread(target=keep_height, args=(tl,)).start()
-    Thread(target=control_tl, args=(tl,)).start()
-    
-    time.sleep(4)
+    t = Thread(target=keep_height, args=(tl,))
+    t.start()
+    joins.append(t)
+    t = Thread(target=control_tl, args=(tl,))
+    t.start()
+    joins.append(t)
+
+    time.sleep(0.2)
     print("高度稳定")
 
     # 寻找第一张
     CONTROL_MODE_TARGET = False
     print("开环前飞")
-    
+    e_fly(tl)
+    print("开环前飞结束")
+
     while RUNNING:
-        if tl.get_mission_pad_id() == -1:
+        if not TARGET_GOT:
             tl.send_rc_control(0, 20, int(OUTPUT["vz"]), 0)
         else:
             break
         time.sleep(0.001)
-        
-    tl.move_forward(30)
-    
+
     CONTROL_MODE_TARGET = True
     print(f"开始追踪：{TARGET_TYPE}")
 
     while OUTPUT["d"] > 4 or OUTPUT["d"] < 0:
         time.sleep(0.001)
-    
+
     # 寻找第二张
     CONTROL_MODE_TARGET = False
     TARGET_TYPE = "bit"
-    
+
     print("开环右飞")
-    
+    e_fly(tl, direction="R")
+    print("开环右飞结束")
+
     while RUNNING:
-        if tl.get_mission_pad_id() != 2:
+        if not TARGET_GOT:
             tl.send_rc_control(20, 0, int(OUTPUT["vz"]), 0)
+        else:
+            break
+        time.sleep(0.001)
+        
+    CONTROL_MODE_TARGET = True
+    print(f"开始追踪：{TARGET_TYPE}")
+
+    while OUTPUT["d"] > 4 or OUTPUT["d"] < 0:
+        time.sleep(0.001)
+        
+    # 寻找第三张
+    CONTROL_MODE_TARGET = False
+    TARGET_TYPE = "drone"
+
+    print("开环后飞")
+    e_fly(tl, direction="B")
+    print("开环后飞结束")
+
+    while RUNNING:
+        if not TARGET_GOT:
+            tl.send_rc_control(0, -20, int(OUTPUT["vz"]), 0)
         else:
             break
         time.sleep(0.001)
 
     CONTROL_MODE_TARGET = True
     print(f"开始追踪：{TARGET_TYPE}")
-    
+
     while OUTPUT["d"] > 4 or OUTPUT["d"] < 0:
         time.sleep(0.001)
+        
+    TARGET_TYPE = "none"
+        
+    # 返航
+    CONTROL_MODE_TARGET = False
+    
+    tl.move_left(100)
+    tl.move_left(100)
+    tl.move_left(100)
 
     tl.send_rc_control(0, 0, 0, 0)
-    RUNNING = False
-    time.sleep(5)
 
 
 if __name__ == "__main__":
     tl = Tello()
-
+    joins = []
+    
     try:
-        main(tl)
+        main(tl, joins)
 
     except KeyboardInterrupt:
         print("^C")
         RUNNING = False
         time.sleep(1)
-
+        
     finally:
         tl.send_rc_control(0, 0, 0, 0)
         tl.land()
-        tl.streamoff()
         
-    time.sleep(4)
+        RUNNING = False
+        
+        time.sleep(0.5)
+        
+        tl.streamoff()
+        for join in joins:
+            x: Thread = join
+            if x is not None and x.is_alive:
+                x.join()
