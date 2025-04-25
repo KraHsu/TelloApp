@@ -187,21 +187,7 @@ class DroneController:
 
             if distance is not None:
                 self.output["d"] = distance
-                # FUCK
-                if center_x < target_center_x:
-                    center_x += 1
-                elif center_x > target_center_x:
-                    center_x -= 1
 
-                if center_y < target_center_y:
-                    center_y += 1
-                elif center_y > target_center_y:
-                    center_y -= 1
-
-                self.output["d"] = math.sqrt(
-                    (target_center_x - center_x) ** 2
-                    + (target_center_y - center_y) ** 2
-                )
         else:
             # 如果没有检测到目标，重置控制
             self.pid_vx.reset()

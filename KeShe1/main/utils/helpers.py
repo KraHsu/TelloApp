@@ -194,23 +194,6 @@ def add_annotation_area(frame, center_x, center_y, distance, font_path=None):
     返回:
         ndarray: 添加注释区域后的图像
     """
-    # FUCK
-    target_center_x = CONTROL_CONFIG["TARGET_CENTER_X"]
-    target_center_y = CONTROL_CONFIG["TARGET_CENTER_Y"]
-    if center_x < target_center_x:
-        center_x += 1
-    elif center_x > target_center_x:
-        center_x -= 1
-
-    if center_y < target_center_y:
-        center_y += 1
-    elif center_y > target_center_y:
-        center_y -= 1
-
-    distance = math.sqrt(
-        (target_center_x - center_x) ** 2 + (target_center_y - center_y) ** 2
-    )
-
     annotation_height = VIDEO_CONFIG["ANNOTATION_HEIGHT"]
     background_color = (255, 255, 255)
     font_color = (0, 0, 0)

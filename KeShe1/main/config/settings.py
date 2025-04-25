@@ -73,9 +73,8 @@ MISSION_CONFIG = {
         {"direction": "B", "duration": 5},  # 后退
     ],
     "RETURN_HOME": [
-        {"command": "move_left", "distance": 100},
-        {"command": "move_left", "distance": 100},
-        {"command": "move_left", "distance": 100},
+        {"command": "move_left", "distance": 150},
+        {"command": "move_left", "distance": 150},
     ],
 }
 

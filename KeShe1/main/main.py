@@ -51,6 +51,22 @@ def initialize_tello():
     # 创建Tello对象
     tello = Tello()
 
+    # DEBUG
+    no_func = lambda *args: 1
+
+    tello.takeoff = no_func
+    tello.send_rc_control = no_func
+
+    tello.move_up = no_func
+    tello.move_down = no_func
+    tello.move_forward = no_func
+    tello.move_back = no_func
+    tello.move_right = no_func
+    tello.move_left = no_func
+
+    tello.land = no_func
+    tello.emergency = no_func
+
     try:
         # 尝试连接到Tello
         tello.connect()

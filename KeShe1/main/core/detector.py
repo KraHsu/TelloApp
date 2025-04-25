@@ -125,6 +125,26 @@ class ObjectDetector:
                 center_x = int((x1 + x2) / 2)
                 center_y = int((y1 + y2) / 2)
 
+                # FUCK BEGIN
+                for i in range(2):
+                    if center_x < img_center_x:
+                        center_x += 1
+                        x1 += 1
+                        x2 += 1
+                    elif center_x > img_center_x:
+                        center_x -= 1
+                        x1 -= 1
+                        x2 -= 1
+                    if center_y < img_center_y:
+                        center_y += 1
+                        y1 += 1
+                        y2 += 1
+                    elif center_y > img_center_y:
+                        center_y -= 1
+                        y1 -= 1
+                        y2 -= 1
+                # FUCK END
+
                 # 计算到图像中心的距离
                 dx = img_center_x - center_x
                 dy = img_center_y - center_y
