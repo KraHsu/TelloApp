@@ -36,7 +36,7 @@ CONTROL_CONFIG = {
     "TARGET_CENTER_X": VIDEO_CONFIG["CROP_HEIGHT"] // 2,  # 目标中心X坐标
     "TARGET_CENTER_Y": VIDEO_CONFIG["CROP_WIDTH"] // 2,  # 目标中心Y坐标
     "MAX_SPEED": 100,  # 最大速度值
-    "MIN_TARGET_DISTANCE": 4,  # 视为到达目标的最小距离
+    "MIN_TARGET_DISTANCE": 5,  # 视为到达目标的最小距离
 }
 
 # ===== PID控制器参数 =====

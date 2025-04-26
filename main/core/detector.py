@@ -3,6 +3,7 @@
 目标检测模块
 """
 import logging
+import math
 import os
 import time
 import cv2
@@ -10,6 +11,7 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 from config.settings import MODEL_CONFIG, VIDEO_CONFIG, CONTROL_CONFIG
+from utils.helpers import *
 
 
 class ObjectDetector:
@@ -30,6 +32,7 @@ class ObjectDetector:
         target_classes=MODEL_CONFIG["TARGET_CLASSES"],
         device=MODEL_CONFIG["DEVICE"],
         logger: logging.Logger = logging.getLogger("tello_tracking"),
+        font_path=VIDEO_CONFIG["FONT_PATH"],
     ):
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
@@ -37,6 +40,7 @@ class ObjectDetector:
         self.device = device
         self.model = None
         self.logger = logger
+        self.font_path = font_path
 
         # 加载模型
         self._load_model()
@@ -86,6 +90,8 @@ class ObjectDetector:
         results = self.model(
             frame, stream=False, verbose=False, conf=self.confidence_threshold
         )
+        center_x = None
+        center_y = None
 
         # 初始化结果
         detection_result = {
@@ -128,35 +134,11 @@ class ObjectDetector:
                 center_x = int((x1 + x2) / 2)
                 center_y = int((y1 + y2) / 2)
 
-                # FUCK BEGIN
-                for i in range(2):
-                    if center_x < img_center_x:
-                        center_x += 1
-                        x1 += 1
-                        x2 += 1
-                    elif center_x > img_center_x:
-                        center_x -= 1
-                        x1 -= 1
-                        x2 -= 1
-                    if center_y < img_center_y:
-                        center_y += 1
-                        y1 += 1
-                        y2 += 1
-                    elif center_y > img_center_y:
-                        center_y -= 1
-                        y1 -= 1
-                        y2 -= 1
-                # FUCK END
-
                 # 计算到图像中心的距离
                 dx = img_center_x - center_x
                 dy = img_center_y - center_y
                 distance = np.sqrt(dx**2 + dy**2)
-
-                # 在图像上绘制检测结果
-                frame = self._draw_detection(
-                    frame, x1, y1, x2, y2, center_x, center_y, class_name, confidence
-                )
+                # print(f"cx: {center_x}, cy: {center_y}, d: {distance}")
 
                 # 更新结果
                 detection_result.update(
@@ -171,6 +153,11 @@ class ObjectDetector:
                     }
                 )
 
+                # 在图像上绘制检测结果
+                frame = self._draw_detection(
+                    frame, x1, y1, x2, y2, center_x, center_y, class_name, confidence
+                )
+
                 # 只处理第一个符合条件的目标
                 break
 
@@ -183,7 +170,16 @@ class ObjectDetector:
             -1,
         )
 
-        return frame, detection_result
+        # 添加注释区域
+        annotated_frame = add_annotation_area(
+            frame,
+            center_x if center_x else -1,
+            center_y if center_y else -1,
+            detection_result["distance"] if detection_result["detected"] else -1,
+            self.font_path,
+        )
+
+        return annotated_frame, detection_result
 
     def _draw_detection(
         self, frame, x1, y1, x2, y2, center_x, center_y, class_name, confidence

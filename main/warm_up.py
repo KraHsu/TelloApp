@@ -49,20 +49,20 @@ def initialize_tello() -> Tello:
     tello = Tello()
 
     # DEBUG 注释这部分内容以启用飞行
-    no_func = lambda *args: 1
+    # no_func = lambda *args: 1
 
-    tello.takeoff = no_func
-    tello.send_rc_control = no_func
+    # tello.takeoff = no_func
+    # tello.send_rc_control = no_func
 
-    tello.move_up = no_func
-    tello.move_down = no_func
-    tello.move_forward = no_func
-    tello.move_back = no_func
-    tello.move_right = no_func
-    tello.move_left = no_func
+    # tello.move_up = no_func
+    # tello.move_down = no_func
+    # tello.move_forward = no_func
+    # tello.move_back = no_func
+    # tello.move_right = no_func
+    # tello.move_left = no_func
 
-    tello.land = no_func
-    tello.emergency = no_func
+    # tello.land = no_func
+    # tello.emergency = no_func
 
     try:
         tello.connect()
@@ -173,7 +173,7 @@ def main():
     """
     # 设置日志
     logger = setup_logging()
-    logger.info("===== Tello智能目标追踪系统启动 =====")
+    logger.info("===== Tello热身 =====")
 
     try:
         # 初始化Tello
@@ -181,8 +181,12 @@ def main():
 
         # 运行任务
         begin = time.time()
-        run_mission(tello)
+        tello.takeoff()
+        tello.move_up(50)
+        tello.land()
         print(f"总耗时：{time.time() - begin} s")
+        
+        tello.streamoff()
 
     except Exception as e:
         logger.error(f"程序执行出错: {e}")

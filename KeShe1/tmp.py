@@ -36,7 +36,7 @@ if __name__ == "__main__":
     b = 40
     delta = 5
     g = lambda t: 4 * sigmoid(t) * (1 - sigmoid(t))
-    h = lambda t: 50 * g(t) + 10
+    h = lambda t: 50 * g(t / 1.5) + 10
     clamp = create_smooth_clamp(a, b, delta)
     x = np.linspace(l, r, 500)
     y = [clamp(h(xi)) for xi in x]

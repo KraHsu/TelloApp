@@ -176,18 +176,22 @@ class DroneController:
             dx = target_center_x - center_x
             dy = target_center_y - center_y
 
-            if distance > 30:
+            d = math.sqrt(dx**2 + dy**2)
+
+            f = lambda x: x**3 / 21000 + 97 * x / 105
+
+            if d > 30:
                 # 使用普通PID
-                self.output["vy"] = self.pid_vx.update(dx)
-                self.output["vx"] = -self.pid_vy.update(dy)
+                self.output["vy"] = self.pid_vx.update(f(dx))
+                self.output["vx"] = -self.pid_vy.update(f(dy))
                 self.pid_vx_slow.reset()
                 self.pid_vy_slow.reset()
             else:
                 # 使用慢速PID
                 self.pid_vx.reset()
                 self.pid_vy.reset()
-                self.output["vy"] = self.pid_vx_slow.update(dx)
-                self.output["vx"] = -self.pid_vy_slow.update(dy)
+                self.output["vy"] = self.pid_vx_slow.update(f(dx))
+                self.output["vx"] = -self.pid_vy_slow.update(f(dy))
 
             if distance is not None:
                 self.output["d"] = distance
@@ -217,16 +221,30 @@ class DroneController:
         delta = 5
 
         g = lambda t: 4 * sigmoid(t) * (1 - sigmoid(t))
-        h = lambda t: 50 * g(t) + 10
+        h = lambda t: 50 * g(t / 1.5) + 10
         clamp = create_smooth_clamp(a, b, delta)
 
         self.logger.info(f"执行{direction}方向移动，持续{duration}秒")
 
         # 执行移动
         begin = time.time()
+        # while time.time() - begin < 1 and self.running:
+        #     v = 50
+        #     if direction == "F":
+        #         self.tello.send_rc_control(0, int(v), int(self.output["vz"]), 0)
+        #     elif direction == "R":
+        #         self.tello.send_rc_control(int(v), 0, int(self.output["vz"]), 0)
+        #     elif direction == "B":
+        #         self.tello.send_rc_control(0, -int(v), int(self.output["vz"]), 0)
+        #     elif direction == "L":
+        #         self.tello.send_rc_control(-int(v), 0, int(self.output["vz"]), 0)
+        
+        # DEBUG 开环
+        v = 50
+        duration = 2.2
         while time.time() - begin < duration and self.running:
-            t = time.time() - begin
-            v = clamp(h(t))
+            # t = time.time() - begin
+            # v = clamp(h(t))
 
             if direction == "F":
                 self.tello.send_rc_control(0, int(v), int(self.output["vz"]), 0)
@@ -285,14 +303,14 @@ class DroneController:
         返回:
             bool: 是否成功接近目标
         """
-        self.logger.info(f"等待接近目标 (距离 <= {min_distance})")
+        self.logger.info(f"等待接近目标 (距离 < {min_distance})")
 
         while self.running:
             # if not self.target_got:
             #     self.logger.warning("目标丢失，接近终止")
             #     return False
 
-            if self.output["d"] > 0 and self.output["d"] <= min_distance:
+            if self.output["d"] > 0 and self.output["d"] < min_distance:
                 self.logger.info(f"成功接近目标，距离: {self.output['d']:.2f}")
                 return True
 
@@ -322,16 +340,25 @@ class DroneController:
         """
         while self.running and not self.stop_event.is_set():
             if self.control_mode_target:
+                # DEBUG PID OUTPUT
                 # 目标跟踪模式，使用PID输出控制
-                if 0 < self.output["vy"] < 4:
-                    self.output["vy"] = 3
-                elif -4 < self.output["vy"] < 0:
-                    self.output["vy"] = -3
 
-                if 0 < self.output["vx"] < 4:
-                    self.output["vx"] = 3
-                elif -4 < self.output["vx"] < 0:
-                    self.output["vx"] = -3
+                min = 7
+                zero = 0
+
+                if zero < self.output["vy"] < min + 1:
+                    self.output["vy"] = min
+                elif -min - 1 < self.output["vy"] < -zero:
+                    self.output["vy"] = -min
+                # elif -zero <= self.output["vy"] <= zero:
+                #     self.output["vy"] = 0
+
+                if 0 < self.output["vx"] < min + 1:
+                    self.output["vx"] = min
+                elif -min - 1 < self.output["vx"] < 0:
+                    self.output["vx"] = -min
+                # elif -zero <= self.output["vx"] <= zero:
+                #     self.output["vx"] = 0
 
                 self.tello.send_rc_control(
                     int(self.output["vy"]),

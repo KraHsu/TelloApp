@@ -9,7 +9,9 @@ import time
 import numpy as np
 from threading import Thread, Event
 from config.settings import VIDEO_CONFIG
+from core.detector import ObjectDetector
 from utils.helpers import add_annotation_area, get_timestamp_str, ensure_dir
+from djitellopy import BackgroundFrameRead
 
 
 class VideoProcessor:
@@ -25,16 +27,16 @@ class VideoProcessor:
 
     def __init__(
         self,
-        frame_read,
-        detector,
+        frame_read: BackgroundFrameRead,
+        detector: ObjectDetector,
         save_video=True,
-        font_path=VIDEO_CONFIG["FONT_PATH"],
+        # font_path=VIDEO_CONFIG["FONT_PATH"],
         logger: logging.Logger = logging.getLogger("tello_tracking"),
     ):
         self.frame_read = frame_read
         self.detector = detector
         self.save_video = save_video
-        self.font_path = font_path
+        # self.font_path = font_path
         self.running = False
         self.target_type = None
         self.stop_event = Event()
@@ -204,24 +206,15 @@ class VideoProcessor:
             else:
                 no_target_count += 1
 
-            # 添加注释区域
-            annotated_frame = add_annotation_area(
-                processed_frame,
-                result["center_x"] if result["detected"] else -1,
-                result["center_y"] if result["detected"] else -1,
-                result["distance"] if result["detected"] else -1,
-                self.font_path,
-            )
-
             # 保存当前帧（用于可能的截图）
-            self.current_frame = annotated_frame
+            self.current_frame = processed_frame
 
             # 显示视频
-            cv2.imshow("Tello目标检测", annotated_frame)
+            cv2.imshow("Tello目标检测", processed_frame)
 
             # 保存视频
             if self.video_writer:
-                self.video_writer.write(annotated_frame)
+                self.video_writer.write(processed_frame)
 
             # 处理键盘输入
             key = cv2.waitKey(1) & 0xFF

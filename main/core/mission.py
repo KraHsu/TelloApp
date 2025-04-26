@@ -131,18 +131,21 @@ class MissionExecutor:
         起飞并稳定高度
         """
         self.logger.info("准备起飞...")
+        
+        input("请输入启动指令：")
+        print(f"==== START TIME: {time.time()}")
 
         # 起飞
         takeoff_start = time.time()
         self.tello.takeoff()
         self.logger.info(f"起飞耗时: {time.time() - takeoff_start:.2f}秒")
 
-        # 上升到指定高度
-        self.tello.move_up(50)
+        # # 上升到指定高度
+        # self.tello.move_up(50)
 
-        # 悬停并稳定
-        self.tello.send_rc_control(0, 0, 0, 0)
-        time.sleep(0.2)
+        # # 悬停并稳定
+        # self.tello.send_rc_control(0, 0, 0, 0)
+        # time.sleep(0.2)
 
         self.logger.info("高度稳定，准备执行任务")
 
@@ -171,7 +174,7 @@ class MissionExecutor:
             self.controller.execute_move(direction, duration)
 
         # 搜索目标
-        self.controller.search_for_target(direction)
+        self.controller.search_for_target(direction, speed=30)
 
         # 如果找到目标，启用目标跟踪
         if self.controller.target_got:
